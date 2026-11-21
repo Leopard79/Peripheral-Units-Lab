@@ -3,7 +3,7 @@ import time
 import cv2
 import serial
 from ultralytics import YOLO
-
+#testing vs code commits
 # استدعاء دوال الصوت من ملف زميلك
 import voice_system as vs
 
