@@ -2,16 +2,20 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_arduino_version.h>
-//اول تعديل
+
 typedef struct __attribute__((packed)) {
     uint8_t  alertActive;
     int16_t  threatAngle;
+    int16_t  pan;
+    int16_t  tilt;
     uint32_t msgCounter;
 } DroneAlertPacket;
 
 volatile bool          hasNewPacket  = false;
 volatile uint8_t       latestActive  = 0;
 volatile int16_t       latestAngle   = 0;
+volatile int16_t       latestPan     = 90;
+volatile int16_t       latestTilt    = 90;
 volatile uint32_t      latestCounter = 0;
 volatile unsigned long lastRxTime    = 0;
 
@@ -24,6 +28,8 @@ void handleData(const uint8_t *data, int len) {
     memcpy(&pkt, data, sizeof(pkt));
     latestActive  = pkt.alertActive;
     latestAngle   = pkt.threatAngle;
+    latestPan     = pkt.pan;
+    latestTilt    = pkt.tilt;
     latestCounter = pkt.msgCounter;
     lastRxTime    = millis();
     hasNewPacket  = true;
@@ -58,6 +64,8 @@ void loop() {
     if (hasNewPacket) {
         uint8_t  active = latestActive;
         int16_t  angle  = latestAngle;
+        int16_t  pan    = latestPan;
+        int16_t  tilt   = latestTilt;
         uint32_t count  = latestCounter;
         hasNewPacket = false;
 
@@ -66,7 +74,14 @@ void loop() {
             Serial.println("[LINK] connected to sender");
         }
         if (active == 1) {
-            Serial.print("[ALERT] Drone Detected! Threat Angle: ");
+            const char *dir = (pan < 80) ? "LEFT" : (pan > 100) ? "RIGHT" : "FRONT";
+            Serial.print("[ALERT] Drone Detected! Dir: ");
+            Serial.print(dir);
+            Serial.print(" | Pan: ");
+            Serial.print(pan);
+            Serial.print(" | Tilt: ");
+            Serial.print(tilt);
+            Serial.print(" | Threat Angle: ");
             Serial.print(angle);
             Serial.print(" deg (Msg #");
             Serial.print(count);
