@@ -73,7 +73,7 @@ model = YOLO(
 cap = cv2.VideoCapture(1)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
+#ةىةىةى
 last_alert_time = 0
 ALERT_COOLDOWN = 6.0
 
