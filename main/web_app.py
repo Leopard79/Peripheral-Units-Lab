@@ -5,7 +5,7 @@ import threading
 import time
 import cv2
 from flask import Flask, jsonify, render_template, request
-
+#تجربة جيتهب
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 app = Flask(__name__, template_folder="templates")
