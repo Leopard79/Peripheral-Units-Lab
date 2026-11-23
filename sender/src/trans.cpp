@@ -9,21 +9,20 @@
 
 uint8_t receiverMacAddress[] = {0x70, 0x4B, 0xCA, 0x8E, 0xED, 0x70};
 
-// ===== إعدادات الاختبار (زوايا ثابتة) =====
 const int NEUTRAL_PAN  = 90;
 const int NEUTRAL_TILT = 90;
-const int TARGET_PAN   = 120;   // غيّرها حسب المنصة
-const int TARGET_TILT  = 70;
-const unsigned long TARGET_TIMEOUT = 1000;  // ما وصلت D خلال هالمدة => رجوع للمنتصف
+const unsigned long TARGET_TIMEOUT = 1000;   // ما وصلت D => رجوع للمنتصف
 
-const unsigned long ESPNOW_COOLDOWN    = 3000;
+const unsigned long ESPNOW_COOLDOWN    = 300;   // كل 0.3 ثانية إنذار أثناء التتبع
 const unsigned long HELLO_INTERVAL     = 500;
 const unsigned long HEARTBEAT_INTERVAL = 2000;
 
-// الهيكل نفسه. alertActive: 0 = handshake/heartbeat، 1 = إنذار
+// يجب أن يكون مطابقاً تماماً في المستقبل
 typedef struct __attribute__((packed)) {
-    uint8_t  alertActive;
+    uint8_t  alertActive;   // 0 = handshake/heartbeat، 1 = إنذار
     int16_t  threatAngle;
+    int16_t  pan;
+    int16_t  tilt;
     uint32_t msgCounter;
 } DroneAlertPacket;
 
@@ -52,10 +51,12 @@ void onSent(const uint8_t *mac, esp_now_send_status_t status) {
 }
 #endif
 
-void sendPacket(uint8_t active, int16_t angle) {
+void sendPacket(uint8_t active, int16_t angle, int16_t pan, int16_t tilt) {
     DroneAlertPacket pkt;
     pkt.alertActive = active;
     pkt.threatAngle = angle;
+    pkt.pan         = pan;
+    pkt.tilt        = tilt;
     pkt.msgCounter  = ++packetCounter;
     esp_now_send(receiverMacAddress, (uint8_t *)&pkt, sizeof(pkt));
 }
@@ -73,21 +74,26 @@ void handleLine(const char *s) {
         return;
     }
 
-    int x = 0, y = 0, threatAngle = 0;
-    if (sscanf(s, "D,%d,%d,%d", &x, &y, &threatAngle) == 3) {
+    int pan = 0, tilt = 0, threatAngle = 0;
+    if (sscanf(s, "D,%d,%d,%d", &pan, &tilt, &threatAngle) == 3) {
         unsigned long now = millis();
         lastDTime = now;
 
-        if (!targetActive) {          // نحرّك مرة وحدة فقط عند بداية الرصد
+        pan  = constrain(pan, 0, 180);
+        tilt = constrain(tilt, 0, 180);
+
+        if (!targetActive) {
             targetActive = true;
-            panServo.write(TARGET_PAN);
-            tiltServo.write(TARGET_TILT);
             Serial.println("[TARGET] ON");
         }
 
+        // تتبع مباشر: السيرفو يأخذ نفس زاوية الإصبع
+        panServo.write(pan);
+        tiltServo.write(tilt);
+
         if (now - lastAlertTime >= ESPNOW_COOLDOWN) {
             lastAlertTime = now;
-            sendPacket(1, (int16_t)threatAngle);
+            sendPacket(1, (int16_t)threatAngle, (int16_t)pan, (int16_t)tilt);
         }
     }
 }
@@ -146,11 +152,11 @@ void loop() {
     if (!linked) {
         if (now - lastHelloTime >= HELLO_INTERVAL) {
             lastHelloTime = now;
-            sendPacket(0, 0);
+            sendPacket(0, 0, NEUTRAL_PAN, NEUTRAL_TILT);
         }
     } else if (now - lastHeartbeatTime >= HEARTBEAT_INTERVAL) {
         lastHeartbeatTime = now;
-        sendPacket(0, 0);
+        sendPacket(0, 0, NEUTRAL_PAN, NEUTRAL_TILT);
     }
 
     if (linked != prevLinked) {
