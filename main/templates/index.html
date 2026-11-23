@@ -371,12 +371,14 @@
 
         <div class="feed-panel">
             <div class="feed-header">
-                <span>LIVE SNAPSHOT (1s)</span>
+                <!-- تم تغيير النص ليعكس أن الصورة تظهر فقط عند وجود خطر -->
+                <span>THREAT SNAPSHOT</span>
                 <span id="img-time">--:--:--</span>
             </div>
             <div class="feed-box">
-                <img id="live-frame" alt="Live Camera Frame">
-                <div id="feed-placeholder">WAITING FOR LIVE FRAME...</div>
+                <img id="live-frame" alt="Threat Frame">
+                <!-- تم تغيير رسالة الانتظار -->
+                <div id="feed-placeholder">CAMERA STANDBY - WAITING FOR THREAT...</div>
             </div>
         </div>
 
@@ -400,7 +402,6 @@
 
         <div class="keypad-panel">
             <div class="keypad-grid">
-                <!-- تم إضافة "this" لتمرير الزر نفسه للدالة لتعطيله مؤقتاً -->
                 <button type="button" class="key-btn" onclick="sendLetter('A', this)">A</button>
                 <button type="button" class="key-btn" onclick="sendLetter('B', this)">B</button>
                 <button type="button" class="key-btn" onclick="sendLetter('C', this)">C</button>
@@ -434,7 +435,6 @@
         }
 
         async function sendLetter(letter, btnEl) {
-            // تعطيل الزر مؤقتاً لتجنب الضغط المزدوج
             btnEl.disabled = true;
             setTimeout(() => { btnEl.disabled = false; }, 300);
 
@@ -467,7 +467,12 @@
                 subEl.textContent = "Check connection to main system";
                 modeDisplay.textContent = "NOT ACTIVE";
                 document.getElementById("dir-display").textContent = "NONE";
-                return; // تخطي بقية التحديثات حتى تعود الإشارة
+                
+                // إخفاء الصورة في حال فقدان الاتصال
+                document.getElementById("live-frame").style.display = "none";
+                document.getElementById("feed-placeholder").style.display = "block";
+                document.getElementById("feed-placeholder").textContent = "CONNECTION LOST...";
+                return;
             }
 
             const detected = Boolean(data.detected);
@@ -479,7 +484,7 @@
             document.getElementById("angle-display").textContent = `${angle}°`;
             document.getElementById("dir-display").textContent = detected ? direction.toUpperCase() : "NONE";
 
-            // 2. تدوير سلس للبوصلة (حتى لا تدور بالعكس عند العبور بين 359 و 0)
+            // 2. تدوير سلس للبوصلة
             const targetAngle = detected ? angle : 0;
             let diff = targetAngle - (currentVisualAngle % 360);
             if (diff > 180) diff -= 360;
@@ -491,15 +496,11 @@
             if (detected) {
                 document.body.classList.add("alert-active");
                 
-                // تخصيص النص والاهتزاز حسب النمط الفعال
                 if (mode === "MODE_A") {
                     titleEl.textContent = "DRONE DETECTED!";
                     subEl.textContent = `Target bearing: ${direction} (${angle}°)`;
                     
-                    // تفعيل الاهتزاز فقط في النمط A وعند الاكتشاف لأول مرة
-                    if (!wasDetected) {
-                        triggerAlertVibration();
-                    }
+                    if (!wasDetected) triggerAlertVibration();
                 } else if (mode === "MODE_B") {
                     titleEl.textContent = "MOTION DETECTED!";
                     subEl.textContent = `Rear threat at: ${direction}`;
@@ -507,7 +508,6 @@
                     titleEl.textContent = "THREAT DETECTED!";
                     subEl.textContent = `Direction: ${direction}`;
                 }
-                
             } else {
                 document.body.classList.remove("alert-active");
                 titleEl.textContent = "AREA CLEAR";
@@ -515,14 +515,25 @@
             }
             wasDetected = detected;
 
-            // 4. تحديث الصورة فقط عندما يتغير العداد (لتوفير الموارد وتقليل الوميض)
-            if (data.image && data.image_seq !== lastImageSeq) {
-                lastImageSeq = data.image_seq;
-                const imgEl = document.getElementById("live-frame");
-                imgEl.src = "data:image/jpeg;base64," + data.image;
-                imgEl.style.display = "block";
-                document.getElementById("feed-placeholder").style.display = "none";
-                document.getElementById("img-time").textContent = data.image_time || "--:--:--";
+            // 4. تحديث وعرض الصورة *فقط* عند اكتشاف خطر
+            const imgEl = document.getElementById("live-frame");
+            const placeholderEl = document.getElementById("feed-placeholder");
+            const imgTimeEl = document.getElementById("img-time");
+
+            if (detected) {
+                if (data.image && data.image_seq !== lastImageSeq) {
+                    lastImageSeq = data.image_seq;
+                    imgEl.src = "data:image/jpeg;base64," + data.image;
+                    imgEl.style.display = "block";
+                    placeholderEl.style.display = "none";
+                    imgTimeEl.textContent = data.image_time || "--:--:--";
+                }
+            } else {
+                // إخفاء الصورة وإظهار النائب عند زوال الخطر
+                imgEl.style.display = "none";
+                placeholderEl.style.display = "block";
+                placeholderEl.textContent = "CAMERA STANDBY - WAITING FOR THREAT...";
+                imgTimeEl.textContent = "--:--:--";
             }
         }
 
