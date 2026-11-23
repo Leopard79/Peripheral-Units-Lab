@@ -10,13 +10,12 @@ CAMERA_INDEX = 0
 SEND_INTERVAL = 0.05      # 20Hz
 
 # ===== إعدادات التتبع =====
-FINGER_MODE = "any"       # "index" = السبابة فقط ، "any" = أعلى إصبع في الصورة
-PAN_MIN, PAN_MAX = 0, 180
-TILT_MIN, TILT_MAX = 30, 150   # حدود آمنة لمنصتك
-INVERT_PAN = False        # اعكسها إذا كان السيرفو يتحرك بعكس الإصبع
+FINGER_MODE = "index"     # "index" = السبابة ، "any" = أعلى إصبع في الصورة
+USE_TILT = False          # False = محرك واحد (Pan فقط) ، True = محركان
+INVERT_PAN = False        # True إذا تحرك السيرفو عكس إصبعك
 INVERT_TILT = False
-MARGIN = 0.10             # هامش من أطراف الصورة ليصل السيرفو للحدود
-SMOOTH = 0.35             # 0..1 (أقل = أنعم وأبطأ)
+MARGIN = 0.05             # هامش صغير ليصل السيرفو إلى 0 و180 بسهولة
+SMOOTH = 0.4              # 0..1 (أقل = أنعم وأبطأ)
 
 TIP_IDS = [4, 8, 12, 16, 20]
 
@@ -44,7 +43,6 @@ def send_to_esp32(message):
 
 
 def pick_tip(hl):
-    """يرجع (x, y) طرف الإصبع المتتبَّع بإحداثيات 0..1"""
     if FINGER_MODE == "index":
         p = hl.landmark[8]
     else:
@@ -52,12 +50,13 @@ def pick_tip(hl):
     return p.x, p.y
 
 
-def to_angle(v, lo, hi, invert):
+def to_angle(v, invert):
+    """يحوّل 0..1 إلى زاوية 0..180"""
     v = (v - MARGIN) / (1 - 2 * MARGIN)
     v = max(0.0, min(1.0, v))
     if invert:
         v = 1 - v
-    return lo + v * (hi - lo)
+    return v * 180
 
 
 mp_hands = mp.solutions.hands
@@ -78,7 +77,7 @@ while cap.isOpened():
     if not ok:
         break
 
-    frame = cv2.flip(frame, 1)          # مرآة ليكون الاتجاه طبيعياً
+    frame = cv2.flip(frame, 1)
     h, w = frame.shape[:2]
     result = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -89,26 +88,28 @@ while cap.isOpened():
         mp_draw.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
 
         tx, ty = pick_tip(hl)
-        pan_t = to_angle(tx, PAN_MIN, PAN_MAX, INVERT_PAN)
-        tilt_t = to_angle(ty, TILT_MIN, TILT_MAX, INVERT_TILT)
+        pan_t = to_angle(tx, INVERT_PAN)
+        tilt_t = to_angle(ty, INVERT_TILT) if USE_TILT else 90
 
-        # تنعيم
         pan_s += (pan_t - pan_s) * SMOOTH
         tilt_s += (tilt_t - tilt_s) * SMOOTH
-        pan, tilt = int(round(pan_s)), int(round(tilt_s))
+        pan = max(0, min(180, int(round(pan_s))))
+        tilt = max(0, min(180, int(round(tilt_s))))
 
-        # زاوية التهديد: 0 = أمام ، سالب = يسار ، موجب = يمين (0..359)
-        threat = (pan - 90) % 360
+        threat = pan   # الزاوية نفسها 0..180
 
-        px, py = int(tx * w), int(ty * h)
-        cv2.circle(frame, (px, py), 12, (0, 0, 255), -1)
+        # رسم شريط الزاوية ودائرة على الإصبع
+        cv2.circle(frame, (int(tx * w), int(ty * h)), 12, (0, 0, 255), -1)
+        cv2.rectangle(frame, (20, h - 40), (w - 20, h - 20), (80, 80, 80), 2)
+        bx = 20 + int(pan / 180 * (w - 40))
+        cv2.circle(frame, (bx, h - 30), 10, (0, 255, 0), -1)
 
         now = time.time()
         if now - last_serial_time >= SEND_INTERVAL:
             last_serial_time = now
             send_to_esp32(f"D,{pan},{tilt},{threat}\n")
 
-        cv2.putText(frame, f"PAN {pan}  TILT {tilt}  THREAT {threat}",
+        cv2.putText(frame, f"ANGLE {pan}  TILT {tilt}",
                     (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
     if visible != was_visible:
