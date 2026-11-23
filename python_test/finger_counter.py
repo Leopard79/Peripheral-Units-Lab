@@ -4,7 +4,7 @@ import cv2
 import mediapipe as mp
 import serial
 
-SERIAL_PORT = "COM4"      # غيّره لمنفذ ESP32 المرسل
+SERIAL_PORT = "COM10"      # غيّره لمنفذ ESP32 المرسل
 BAUD = 115200
 CAMERA_INDEX = 0          # كاميرا اللابتوب
 SEND_INTERVAL = 0.05      # 20Hz كما في main
