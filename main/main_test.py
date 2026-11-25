@@ -3,7 +3,6 @@ import time
 import cv2
 import serial
 from ultralytics import YOLO
-
 import voice_system as vs
 import web_app as web
 
