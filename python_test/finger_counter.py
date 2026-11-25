@@ -4,10 +4,20 @@ import cv2
 import mediapipe as mp
 import serial
 
-SERIAL_PORT = "COM4"      # غيّره لمنفذ ESP32 المرسل
+SERIAL_PORT = "COM10"      # غيّره لمنفذ ESP32 المرسل
 BAUD = 115200
-CAMERA_INDEX = 0          # كاميرا اللابتوب
-SEND_INTERVAL = 0.05      # 20Hz كما في main
+CAMERA_INDEX = 0
+SEND_INTERVAL = 0.05      # 20Hz
+
+# ===== إعدادات التتبع =====
+FINGER_MODE = "index"     # "index" = السبابة ، "any" = أعلى إصبع في الصورة
+USE_TILT = False          # False = محرك واحد (Pan فقط) ، True = محركان
+INVERT_PAN = False        # True إذا تحرك السيرفو عكس إصبعك
+INVERT_TILT = False
+MARGIN = 0.05             # هامش صغير ليصل السيرفو إلى 0 و180 بسهولة
+SMOOTH = 0.4              # 0..1 (أقل = أنعم وأبطأ)
+
+TIP_IDS = [4, 8, 12, 16, 20]
 
 esp_serial = None
 try:
@@ -15,7 +25,7 @@ try:
     esp_serial.port = SERIAL_PORT
     esp_serial.baudrate = BAUD
     esp_serial.timeout = 0.05
-    esp_serial.dtr = False   # نفس إعدادات main
+    esp_serial.dtr = False
     esp_serial.rts = False
     esp_serial.open()
     time.sleep(2)
@@ -32,6 +42,23 @@ def send_to_esp32(message):
             print(f"[Serial Error]: {e}")
 
 
+def pick_tip(hl):
+    if FINGER_MODE == "index":
+        p = hl.landmark[8]
+    else:
+        p = min((hl.landmark[i] for i in TIP_IDS), key=lambda q: q.y)
+    return p.x, p.y
+
+
+def to_angle(v, invert):
+    """يحوّل 0..1 إلى زاوية 0..180"""
+    v = (v - MARGIN) / (1 - 2 * MARGIN)
+    v = max(0.0, min(1.0, v))
+    if invert:
+        v = 1 - v
+    return v * 180
+
+
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 hands = mp_hands.Hands(max_num_hands=1,
@@ -41,6 +68,7 @@ hands = mp_hands.Hands(max_num_hands=1,
 cap = cv2.VideoCapture(CAMERA_INDEX)
 last_serial_time = 0
 was_visible = False
+pan_s, tilt_s = 90.0, 90.0
 
 print("Press 'q' to quit.")
 
@@ -49,6 +77,7 @@ while cap.isOpened():
     if not ok:
         break
 
+    frame = cv2.flip(frame, 1)
     h, w = frame.shape[:2]
     result = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -58,29 +87,36 @@ while cap.isOpened():
         hl = result.multi_hand_landmarks[0]
         mp_draw.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
 
-        center_x = int(sum(p.x for p in hl.landmark) / len(hl.landmark) * w)
-        center_y = int(sum(p.y for p in hl.landmark) / len(hl.landmark) * h)
+        tx, ty = pick_tip(hl)
+        pan_t = to_angle(tx, INVERT_PAN)
+        tilt_t = to_angle(ty, INVERT_TILT) if USE_TILT else 90
 
-        if center_x < w * 0.33:
-            direction, angle = "Left", 315
-        elif center_x > w * 0.67:
-            direction, angle = "Right", 45
-        else:
-            direction, angle = "Front", 0
+        pan_s += (pan_t - pan_s) * SMOOTH
+        tilt_s += (tilt_t - tilt_s) * SMOOTH
+        pan = max(0, min(180, int(round(pan_s))))
+        tilt = max(0, min(180, int(round(tilt_s))))
+
+        threat = pan   # الزاوية نفسها 0..180
+
+        # رسم شريط الزاوية ودائرة على الإصبع
+        cv2.circle(frame, (int(tx * w), int(ty * h)), 12, (0, 0, 255), -1)
+        cv2.rectangle(frame, (20, h - 40), (w - 20, h - 20), (80, 80, 80), 2)
+        bx = 20 + int(pan / 180 * (w - 40))
+        cv2.circle(frame, (bx, h - 30), 10, (0, 255, 0), -1)
 
         now = time.time()
         if now - last_serial_time >= SEND_INTERVAL:
             last_serial_time = now
-            send_to_esp32(f"D,{center_x},{center_y},{angle}\n")
+            send_to_esp32(f"D,{pan},{tilt},{threat}\n")
 
-        cv2.putText(frame, f"TARGET {direction} ({center_x},{center_y})",
+        cv2.putText(frame, f"ANGLE {pan}  TILT {tilt}",
                     (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
     if visible != was_visible:
         print("[Target] ON" if visible else "[Target] OFF")
         was_visible = visible
 
-    cv2.imshow("Link Test (MediaPipe)", frame)
+    cv2.imshow("Finger Tracking (MediaPipe)", frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 

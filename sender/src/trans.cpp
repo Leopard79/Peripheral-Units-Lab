@@ -9,18 +9,28 @@
 
 uint8_t receiverMacAddress[] = {0x70, 0x4B, 0xCA, 0x8E, 0xED, 0x70};
 
-// ===== إعدادات الاختبار (زوايا ثابتة) =====
-const int NEUTRAL_PAN  = 90;
-const int NEUTRAL_TILT = 90;
-const int TARGET_PAN   = 120;   // غيّرها حسب المنصة
-const int TARGET_TILT  = 70;
-const unsigned long TARGET_TIMEOUT = 1000;  // ما وصلت D خلال هالمدة => رجوع للمنتصف
+// ===== إعدادات التتبع (صورة 640x480) =====
+const int   NEUTRAL_PAN  = 90;
+const int   NEUTRAL_TILT = 90;
+const int   CENTER_X     = 320;
+const int   CENTER_Y     = 240;
+const int   DEADZONE     = 20;      // بكسل
+const float KP           = 0.012f;  // درجة لكل بكسل خطأ لكل رسالة (عدّلها بالتجربة)
+const int   SIGN_PAN     = -1;      // اقلب الإشارة إذا هربت المنصة عن الهدف
+const int   SIGN_TILT    = -1;
+const bool  RETURN_NEUTRAL_ON_LOST = false;  // false = تثبت مكانها إذا ضاع الهدف
 
+// حدود ميكانيكية آمنة للسيرفو (قلّصها إذا المنصة بتصطدم)
+const float PAN_MIN  = 10.0f, PAN_MAX  = 170.0f;
+const float TILT_MIN = 30.0f, TILT_MAX = 150.0f;
+
+const unsigned long TARGET_TIMEOUT     = 1000;  // ما وصلت D خلال هالمدة => الهدف ضاع
 const unsigned long ESPNOW_COOLDOWN    = 3000;
 const unsigned long HELLO_INTERVAL     = 500;
 const unsigned long HEARTBEAT_INTERVAL = 2000;
 
-// الهيكل نفسه. alertActive: 0 = handshake/heartbeat، 1 = إنذار
+// الهيكل: يجب أن يطابق المستقبل تماماً
+// alertActive: 0 = handshake/heartbeat، 1 = إنذار
 typedef struct __attribute__((packed)) {
     uint8_t  alertActive;
     int16_t  threatAngle;
@@ -29,6 +39,9 @@ typedef struct __attribute__((packed)) {
 
 Servo panServo;
 Servo tiltServo;
+
+float panAngle  = NEUTRAL_PAN;
+float tiltAngle = NEUTRAL_TILT;
 
 bool targetActive = false;
 unsigned long lastDTime = 0;
@@ -61,8 +74,24 @@ void sendPacket(uint8_t active, int16_t angle) {
 }
 
 void goNeutral() {
+    panAngle  = NEUTRAL_PAN;
+    tiltAngle = NEUTRAL_TILT;
     panServo.write(NEUTRAL_PAN);
     tiltServo.write(NEUTRAL_TILT);
+}
+
+void trackTarget(int x, int y) {
+    int errorX = x - CENTER_X;
+    int errorY = y - CENTER_Y;
+
+    if (abs(errorX) > DEADZONE) {
+        panAngle = constrain(panAngle + SIGN_PAN * errorX * KP, PAN_MIN, PAN_MAX);
+        panServo.write((int)panAngle);
+    }
+    if (abs(errorY) > DEADZONE) {
+        tiltAngle = constrain(tiltAngle + SIGN_TILT * errorY * KP, TILT_MIN, TILT_MAX);
+        tiltServo.write((int)tiltAngle);
+    }
 }
 
 void handleLine(const char *s) {
@@ -78,12 +107,12 @@ void handleLine(const char *s) {
         unsigned long now = millis();
         lastDTime = now;
 
-        if (!targetActive) {          // نحرّك مرة وحدة فقط عند بداية الرصد
+        if (!targetActive) {
             targetActive = true;
-            panServo.write(TARGET_PAN);
-            tiltServo.write(TARGET_TILT);
             Serial.println("[TARGET] ON");
         }
+
+        trackTarget(x, y);
 
         if (now - lastAlertTime >= ESPNOW_COOLDOWN) {
             lastAlertTime = now;
@@ -139,7 +168,7 @@ void loop() {
 
     if (targetActive && (now - lastDTime > TARGET_TIMEOUT)) {
         targetActive = false;
-        goNeutral();
+        if (RETURN_NEUTRAL_ON_LOST) goNeutral();
         Serial.println("[TARGET] OFF (timeout)");
     }
 

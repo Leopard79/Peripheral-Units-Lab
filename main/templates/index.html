@@ -168,7 +168,6 @@
             color: var(--text-muted);
         }
 
-        /* نافذة الصورة الفورية (كل 1 ثانية) */
         .feed-panel {
             background: var(--panel-bg);
             border: 1px solid #1d2d38;
@@ -218,7 +217,6 @@
             padding: 12px;
         }
 
-        /* بوصلة الخطر */
         .compass-panel {
             background: var(--panel-bg);
             border: 1px solid #1d2d38;
@@ -312,7 +310,6 @@
             color: var(--accent-alert);
         }
 
-        /* المربعات الأربعة لإرسال الحروف إلى الـ Terminal */
         .keypad-panel {
             background: var(--panel-bg);
             border: 1px solid #1d2d38;
@@ -339,7 +336,7 @@
             transition: transform 0.08s ease, background-color 0.15s ease, border-color 0.15s ease;
         }
 
-        .key-btn:active {
+        .key-btn:active, .key-btn:disabled {
             transform: scale(0.94);
             background: var(--accent-safe);
             color: #05110b;
@@ -374,12 +371,14 @@
 
         <div class="feed-panel">
             <div class="feed-header">
-                <span>LIVE SNAPSHOT (1s)</span>
+                <!-- تم تغيير النص ليعكس أن الصورة تظهر فقط عند وجود خطر -->
+                <span>THREAT SNAPSHOT</span>
                 <span id="img-time">--:--:--</span>
             </div>
             <div class="feed-box">
-                <img id="live-frame" alt="Live Camera Frame">
-                <div id="feed-placeholder">WAITING FOR LIVE FRAME...</div>
+                <img id="live-frame" alt="Threat Frame">
+                <!-- تم تغيير رسالة الانتظار -->
+                <div id="feed-placeholder">CAMERA STANDBY - WAITING FOR THREAT...</div>
             </div>
         </div>
 
@@ -403,10 +402,10 @@
 
         <div class="keypad-panel">
             <div class="keypad-grid">
-                <button type="button" class="key-btn" onclick="sendLetter('A')">A</button>
-                <button type="button" class="key-btn" onclick="sendLetter('B')">B</button>
-                <button type="button" class="key-btn" onclick="sendLetter('C')">C</button>
-                <button type="button" class="key-btn" onclick="sendLetter('D')">D</button>
+                <button type="button" class="key-btn" onclick="sendLetter('A', this)">A</button>
+                <button type="button" class="key-btn" onclick="sendLetter('B', this)">B</button>
+                <button type="button" class="key-btn" onclick="sendLetter('C', this)">C</button>
+                <button type="button" class="key-btn" onclick="sendLetter('D', this)">D</button>
             </div>
             <div id="cmd-status" class="cmd-status">TAP A SQUARE TO SEND LETTER TO TERMINAL</div>
         </div>
@@ -414,12 +413,17 @@
 
     <script>
         let wasDetected = false;
+        let lastImageSeq = -1;
+        let currentVisualAngle = 0; // لضمان دوران سلس للبوصلة
 
         function formatModeText(mode) {
-            if (mode === "MODE_A") {
-                return "MODE_A - SCANNING";
-            }
-            return mode || "STANDBY";
+            const modes = {
+                "MODE_A": "MODE_A - SCANNING",
+                "MODE_B": "MODE_B - BLIND-SPOT GUARD",
+                "MODE_C": "MODE_C - TACTICAL SCOPE",
+                "STANDBY": "STANDBY - POWER SAVING"
+            };
+            return modes[mode] || "NOT ACTIVE";
         }
 
         function triggerAlertVibration() {
@@ -430,8 +434,13 @@
             }
         }
 
-        async function sendLetter(letter) {
+        async function sendLetter(letter, btnEl) {
+            btnEl.disabled = true;
+            setTimeout(() => { btnEl.disabled = false; }, 300);
+
             const cmdEl = document.getElementById("cmd-status");
+            const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+            
             try {
                 const res = await fetch("/api/command", {
                     method: "POST",
@@ -439,53 +448,92 @@
                     body: JSON.stringify({ command: letter })
                 });
                 if (!res.ok) throw new Error("HTTP " + res.status);
-                cmdEl.textContent = `SENT [${letter}] TO TERMINAL`;
+                cmdEl.textContent = `[${timeStr}] SENT [${letter}] TO TERMINAL`;
             } catch (err) {
-                cmdEl.textContent = `FAILED TO SEND [${letter}]`;
+                cmdEl.textContent = `[${timeStr}] FAILED TO SEND [${letter}]`;
             }
         }
 
         function applyState(data) {
+            const titleEl = document.getElementById("threat-title");
+            const subEl = document.getElementById("threat-sub");
+            const modeDisplay = document.getElementById("mode-display");
+            
+            // 1. التحقق من حالة انقطاع الإشارة (> 2 ثانية)
+            const ageMs = data.age_ms || 0;
+            if (ageMs > 2000) {
+                document.body.classList.remove("alert-active");
+                titleEl.textContent = "NO SIGNAL FROM MAIN";
+                subEl.textContent = "Check connection to main system";
+                modeDisplay.textContent = "NOT ACTIVE";
+                document.getElementById("dir-display").textContent = "NONE";
+                
+                // إخفاء الصورة في حال فقدان الاتصال
+                document.getElementById("live-frame").style.display = "none";
+                document.getElementById("feed-placeholder").style.display = "block";
+                document.getElementById("feed-placeholder").textContent = "CONNECTION LOST...";
+                return;
+            }
+
             const detected = Boolean(data.detected);
             const direction = data.direction || "None";
             const angle = Number.isFinite(Number(data.angle)) ? Number(data.angle) : 0;
             const mode = data.mode || "MODE_A";
 
-            document.getElementById("mode-display").textContent = formatModeText(mode);
+            modeDisplay.textContent = formatModeText(mode);
             document.getElementById("angle-display").textContent = `${angle}°`;
             document.getElementById("dir-display").textContent = detected ? direction.toUpperCase() : "NONE";
 
-            const pointer = document.getElementById("pointer-wrapper");
-            pointer.style.transform = `rotate(${detected ? angle : 0}deg)`;
+            // 2. تدوير سلس للبوصلة
+            const targetAngle = detected ? angle : 0;
+            let diff = targetAngle - (currentVisualAngle % 360);
+            if (diff > 180) diff -= 360;
+            if (diff < -180) diff += 360;
+            currentVisualAngle += diff;
+            document.getElementById("pointer-wrapper").style.transform = `rotate(${currentVisualAngle}deg)`;
 
-            const titleEl = document.getElementById("threat-title");
-            const subEl = document.getElementById("threat-sub");
-
+            // 3. تحديث نصوص وألوان حالة الخطر + تخصيص الاهتزاز للوضع A
             if (detected) {
                 document.body.classList.add("alert-active");
-                titleEl.textContent = "DRONE DETECTED!";
-                subEl.textContent = `Target bearing: ${direction} (${angle}°)`;
-
-                if (!wasDetected) {
-                    triggerAlertVibration();
+                
+                if (mode === "MODE_A") {
+                    titleEl.textContent = "DRONE DETECTED!";
+                    subEl.textContent = `Target bearing: ${direction} (${angle}°)`;
+                    
+                    if (!wasDetected) triggerAlertVibration();
+                } else if (mode === "MODE_B") {
+                    titleEl.textContent = "MOTION DETECTED!";
+                    subEl.textContent = `Rear threat at: ${direction}`;
+                } else {
+                    titleEl.textContent = "THREAT DETECTED!";
+                    subEl.textContent = `Direction: ${direction}`;
                 }
             } else {
                 document.body.classList.remove("alert-active");
                 titleEl.textContent = "AREA CLEAR";
                 subEl.textContent = mode === "MODE_A" ? "Active drone scan in progress" : "System in standby";
             }
-
             wasDetected = detected;
 
+            // 4. تحديث وعرض الصورة *فقط* عند اكتشاف خطر
             const imgEl = document.getElementById("live-frame");
             const placeholderEl = document.getElementById("feed-placeholder");
             const imgTimeEl = document.getElementById("img-time");
 
-            if (data.image) {
-                imgEl.src = "data:image/jpeg;base64," + data.image;
-                imgEl.style.display = "block";
-                placeholderEl.style.display = "none";
-                imgTimeEl.textContent = data.image_time || "--:--:--";
+            if (detected) {
+                if (data.image && data.image_seq !== lastImageSeq) {
+                    lastImageSeq = data.image_seq;
+                    imgEl.src = "data:image/jpeg;base64," + data.image;
+                    imgEl.style.display = "block";
+                    placeholderEl.style.display = "none";
+                    imgTimeEl.textContent = data.image_time || "--:--:--";
+                }
+            } else {
+                // إخفاء الصورة وإظهار النائب عند زوال الخطر
+                imgEl.style.display = "none";
+                placeholderEl.style.display = "block";
+                placeholderEl.textContent = "CAMERA STANDBY - WAITING FOR THREAT...";
+                imgTimeEl.textContent = "--:--:--";
             }
         }
 
@@ -506,7 +554,7 @@
         }
 
         pollStatus();
-        setInterval(pollStatus, 500);
+        setInterval(pollStatus, 500); // Polling كل نصف ثانية
     </script>
 </body>
 </html>

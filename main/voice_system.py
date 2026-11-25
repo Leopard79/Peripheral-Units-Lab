@@ -360,7 +360,7 @@ def parse_vosk_message(vosk_json_str, callback_fn=on_voice_message_received):
 
 def start_voice_module(main_callback=on_voice_message_received):
     """Start continuous offline English voice recognition & emergency listener"""
-    model_path = "model_en"
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_en")
     samplerate = 16000
 
     if not os.path.exists(model_path):
