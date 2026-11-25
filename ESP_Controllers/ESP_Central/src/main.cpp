@@ -1,20 +1,16 @@
 #include <Arduino.h>
 
-#include "Stabilizer.h"
-#include "Tracking.h"
-
-#include "Sender.h"
-#include "Receiver.h"
+#define LED_PIN 2
 
 
 void setup() {
-    Serial.begin(115200);
-    
-    initStabilizer();
-    initRadio();
+    pinMode(LED_PIN, OUTPUT);
 }
 
 void loop() {
-    updateStabilizer();
-    checkRadioData();
+    digitalWrite(LED_PIN, HIGH);
+    delay(1000);
+    digitalWrite(LED_PIN, LOW);
+    delay(1000);
+    
 }

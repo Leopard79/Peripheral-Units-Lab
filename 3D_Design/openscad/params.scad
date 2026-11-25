@@ -15,7 +15,7 @@ base_wid_y     = 66.0;
 base_thk       = 5.0;
 helmet_hole_dx = 68.0; // المسافة الطولية بين براغي الخوذة (X)
 helmet_hole_dy = 48.0; // المسافة العرضية بين براغي الخوذة (Y)
-helmet_screw_d = 4.5;  // قطر الثقب (M4)
+helmet_screw_d = 4.8;  // قطر الثقب (M4 مع سماحية مريحة للثقب اليدوي)  // قطر الثقب (M4)
 
 // --- 3. ثقوب تثبيت الكاميرا على MG90S (عدّلها حسب كاميرتك) ---
 cam_hole_dx = 24.0; // ثقوب اللوح السفلي (X)
@@ -85,3 +85,20 @@ z_p4_collar0  = z_p3_top1 + 2.0;
 z_p4_arm0     = Z_P + 16.5; // أعلى من جدار سيرفو الـ Pitch بـ 3 مم لضمان دوران 360° حر!
 z_p4_arm1     = z_p4_arm0 + 4.0;
 Z_TILT        = z_p4_arm0 + yaw_tilt_z;
+
+// --- 9. انحناء قبة الخوذة العسكرية وأذني الأحزمة (V3 - قياسات المسطرة 10 سم) ---
+ruler_half_len    = 50.0; // نصف طول المسطرة (5 سم من كل جهة)
+helmet_sagitta_x  = 8.5;  // ارتفاع الفراغ أمام-خلف عند طرف المسطرة (مم)
+helmet_sagitta_y  = 11.0; // ارتفاع الفراغ يمين-يسار عند طرف المسطرة (مم)
+curved_t_min      = 4.5;  // أقل سماكة للقاعدة عند قمة الخوذة (مم)
+adapter_t_min     = 3.2;  // أقل سماكة للقطعة الوسيطة عند قمة الخوذة (مم)
+strap_slot_w      = 21.0; // عرض فتحة الحزام (لحزام 20 مم أو حبل باراكورد)
+strap_slot_t      = 4.5;  // سماكة فتحة الحزام
+add_strap_ears    = true; // تفعيل/إلغاء الأذنين القطرية للأحزمة
+
+// حساب أنصاف الأقطار والقطع الناقص الثلاثي تلقائياً من قياس المسطرة:
+helmet_Rx = (ruler_half_len*ruler_half_len + helmet_sagitta_x*helmet_sagitta_x) / (2 * helmet_sagitta_x);
+helmet_Ry = (ruler_half_len*ruler_half_len + helmet_sagitta_y*helmet_sagitta_y) / (2 * helmet_sagitta_y);
+ellip_C   = 0.5 * (helmet_Rx + helmet_Ry);
+ellip_A   = ruler_half_len / sqrt(1 - pow((ellip_C - helmet_sagitta_x) / ellip_C, 2));
+ellip_B   = ruler_half_len / sqrt(1 - pow((ellip_C - helmet_sagitta_y) / ellip_C, 2));

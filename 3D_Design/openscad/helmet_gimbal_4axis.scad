@@ -186,6 +186,95 @@ module part5_camera_bracket() {
     }
 }
 
+
+// ============================================================================
+// V3 CURVED HELMET SADDLE & STRAP EARS (مطابقة لانحناء الخوذة 8.5 / 11.0 مم)
+// ============================================================================
+module helmet_dual_footprint_2d() {
+    difference() {
+        union() {
+            rrect(base_len_x, base_wid_y, 5);
+            if (add_strap_ears) {
+                for (sx=[-1, 1], sy=[-1, 1]) {
+                    ang = atan2(sy * 33.0, sx * 43.0);
+                    translate([sx * 43.0, sy * 33.0])
+                        rotate([0, 0, ang])
+                            rbox2d(-10, -15.5, 13.5, 15.5, 4);
+                }
+            }
+        }
+        // فتحات الأحزمة القطرية الأربع
+        if (add_strap_ears) {
+            for (sx=[-1, 1], sy=[-1, 1]) {
+                ang = atan2(sy * 33.0, sx * 43.0);
+                translate([sx * 43.0, sy * 33.0])
+                    rotate([0, 0, ang])
+                        rbox2d(2.5, -strap_slot_w/2, 2.5 + strap_slot_t, strap_slot_w/2, 1.8);
+            }
+        }
+        // ثقوب البراغي الأربعة M4
+        for (sx=[-1, 1], sy=[-1, 1])
+            translate([sx*helmet_hole_dx/2, sy*helmet_hole_dy/2])
+                circle(d=helmet_screw_d);
+        // فتحة تمرير الأسلاك
+        rrect(24, 12, 3);
+    }
+}
+
+module helmet_dome_cutter(t_min) {
+    // قبة إهليلجية مطابقة لقياسات المسطرة (8.5 مم أمام-خلف، 11.0 مم يمين-يسار)
+    translate([0, 0, -t_min - ellip_C])
+        scale([ellip_A, ellip_B, ellip_C])
+            sphere(r=1, $fn=96);
+}
+
+module curved_saddle_body(t_min=curved_t_min, taper_ears=true) {
+    difference() {
+        intersection() {
+            translate([0, 0, -32])
+                linear_extrude(height = 32)
+                    helmet_dual_footprint_2d();
+            if (taper_ears) {
+                // إبقاء السطح العلوي مسطحاً للبرجين والبراغي وتقويس الأذنين لتعانق الخوذة
+                union() {
+                    translate([0, 0, -32]) linear_extrude(height = 32) rrect(84, 64, 5);
+                    translate([0, 0, -t_min + 6.0 - ellip_C])
+                        scale([ellip_A, ellip_B, ellip_C]) sphere(r=1, $fn=96);
+                }
+            }
+        }
+        helmet_dome_cutter(t_min);
+    }
+}
+
+module part1_helmet_base_curved() {
+    mg_cut_w = mg996_wid + tol;
+    mg_cut_h = mg996_len + tol;
+    z_body_c = Z_R - mg996_shaft_offset;
+    union() {
+        curved_saddle_body(curved_t_min, true);
+        extrude_yz(p1_rear_in_x - wall, p1_rear_in_x)
+        difference() {
+            rbox2d(-18, -1.5, 18, 62, 4);
+            translate([0, z_body_c]) square([mg_cut_w, mg_cut_h], center=true);
+            for (sy=[-1, 1], sz=[-1, 1])
+                translate([sy*mg996_hole_dy/2, z_body_c + sz*mg996_hole_dx/2]) circle(d=mg996_screw_d);
+        }
+        extrude_yz(p1_front_in_x, p1_front_in_x + wall)
+        difference() {
+            union() { rbox2d(-14, -1.5, 14, Z_R, 2); translate([0, Z_R]) circle(d=22); }
+            translate([0, Z_R]) circle(d=pivot_bolt_d);
+        }
+        for (y_pos = [-13, 9])
+        extrude_xz(y_pos, y_pos + 4)
+            polygon([[p1_front_in_x+wall-0.5, -1.5], [p1_front_in_x+wall-0.5, 24], [p1_front_in_x+wall+10, -1.5]]);
+    }
+}
+
+module part1b_curved_adapter() {
+    curved_saddle_body(adapter_t_min, false);
+}
+
 module ghost_mg996r() {
     color([0.15, 0.15, 0.18, 0.65]) {
         translate([-27.5, -mg996_wid/2, -mg996_len/2 - mg996_shaft_offset]) cube([37.5, mg996_wid, mg996_len]);
@@ -210,7 +299,7 @@ module ghost_mg90s() {
 }
 
 if (render_mode == "assembly") {
-    color("#2E5B88") part1_helmet_base();
+    color("#2E5B88") part1_helmet_base_curved();
     if (show_motors) translate([p1_rear_in_x - wall, 0, Z_R]) ghost_mg996r();
 
     translate([0, 0, Z_R]) rotate([preview_roll, 0, 0]) translate([0, 0, -Z_R]) {
@@ -235,7 +324,11 @@ if (render_mode == "assembly") {
         }
     }
 } else if (render_mode == "part1") {
+    translate([0, 0, 22]) part1_helmet_base_curved();
+} else if (render_mode == "part1_flat") {
     translate([0, 0, base_thk]) part1_helmet_base();
+} else if (render_mode == "part1b_adapter") {
+    rotate([180, 0, 0]) part1b_curved_adapter();
 } else if (render_mode == "part2") {
     translate([0, 0, -z_p2_bot0]) part2_roll_u_frame();
 } else if (render_mode == "part3") {
