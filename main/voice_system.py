@@ -377,7 +377,7 @@ def start_voice_module(main_callback=on_voice_message_received):
         print("\n============================================================")
         print("   FALCON EYE - ENGLISH VOICE MODULE & STATE MACHINE READY")
         print("============================================================")
-        print("• Mode A (Anti-Drone) : 'mode one'")
+        print("• Mode A (Anti-Drone) : 'tracking'")
         print("• Mode B (Blind-Spot) : 'mode two'")
         print("• Mode C (Periscope)  : 'mode three'")
         print("• Mode D (Standby)    : 'standby'")

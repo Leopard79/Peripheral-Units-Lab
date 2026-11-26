@@ -24,24 +24,21 @@ try:
     time.sleep(2)
     print(f"[Serial] تم الاتصال بـ ESP32 بنجاح على المنفذ {SERIAL_PORT}")
 except Exception as e:
-    print(f"[Serial Warning] لم يتم الاتصال بـ ESP32 ({e}). سيعمل النظام بالصوت والكاميرا فقط.")
+    print(f"[Serial Warning] لم يتم الاتصال بـ ESP32 ({e}). سيعمل النظام بالصوت والويب فقط.")
 
 
 def send_to_esp32(message):
     if esp_serial and esp_serial.is_open:
         try:
             esp_serial.write(message.encode("utf-8"))
-            print(f"[TX -> ESP32]: {message.strip()}")
         except Exception as e:
             print(f"[Serial Error]: {e}")
 
 
 # =====================================================================
-# 2. آلة الحالة: مصدر واحد لتغيير النمط (صوت / جوال / لاحقاً أي مصدر)
+# 2. آلة الحالة (صوت + جوال)
 # =====================================================================
 current_mode = "MODE_A"
-
-# أنماط مفعّلة حالياً. لتفعيل B أو C لاحقاً: أضفها هنا واكتب منطقها بالحلقة
 ACTIVE_MODES = {"MODE_A", "STANDBY"}
 
 PHONE_KEY_TO_MODE = {"A": "MODE_A", "B": "MODE_B", "C": "MODE_C", "D": "STANDBY"}
@@ -56,7 +53,7 @@ VOICE_CMD_TO_MODE = {
 def apply_mode(new_mode, source):
     global current_mode
     if new_mode not in ACTIVE_MODES:
-        print(f"[Mode] {new_mode} غير مفعّل حالياً (المصدر: {source}) - تم التجاهل")
+        print(f"[Mode] {new_mode} غير مفعّل حالياً (المصدر: {source})")
         return
     if new_mode == current_mode:
         return
@@ -74,7 +71,6 @@ def handle_voice_commands(event):
 
 
 def poll_phone_command():
-    """تُنادى كل دورة. pop_last_command ترجع الحرف مرة واحدة ثم تصفّره."""
     pop = getattr(web, "pop_last_command", None)
     if pop is None:
         return
@@ -85,26 +81,25 @@ def poll_phone_command():
             apply_mode(new_mode, "PHONE")
 
 
-threading.Thread(
-    target=vs.start_voice_module, args=(handle_voice_commands,), daemon=True
-).start()
-
-# سيرفر الجوال بخيط مستقل (Flask بدون SocketIO)
+threading.Thread(target=vs.start_voice_module, args=(handle_voice_commands,), daemon=True).start()
 threading.Thread(target=web.start_web_server, daemon=True).start()
 
 # =====================================================================
-# 3. الرؤية الحاسوبية
+# 3. الرؤية الحاسوبية + منطق الإنذار الذكي واللقطة الواحدة
 # =====================================================================
 model = YOLO("C:\\Users\\Rami\\Desktop\\Githup\\Peripheral-Units-Lab\\main\\best.pt")
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)  # غيّره إلى 0 إذا كنت تستخدم كاميرا اللابتوب الداخلية
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-last_alert_time = 0
-ALERT_COOLDOWN = 6.0
+# متغيرات الإنذار الذكي (بدون تكرار مزعج)
+target_present = False
+last_announced_dir = None
+last_seen_time = 0.0
+TARGET_LOST_RESET_SEC = 3.0  # إذا اختفى الهدف 3 ثوانٍ نعتبره هدفاً جديداً عند عودته
 
-last_serial_time = 0
+last_serial_time = 0.0
 SERIAL_INTERVAL = 0.05  # 20Hz
 
 print("جاري تشغيل الكاميرا... اضغط 'q' للإغلاق.")
@@ -116,31 +111,30 @@ while cap.isOpened():
         break
 
     poll_phone_command()
+    now = time.time()
 
     # ---------------- STANDBY ----------------
     if current_mode == "STANDBY":
-        cv2.putText(frame, "STANDBY MODE", (30, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        web.update_alert(False, mode="STANDBY", frame=frame)
-        cv2.imshow("Custom Tumbler Detection", frame)
+        target_present = False
+        last_announced_dir = None
+        cv2.putText(frame, "STANDBY MODE", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        web.update_alert(False, mode="STANDBY")
+        cv2.imshow("Falcon Eye - Mode A", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
         continue
 
     # ---------------- MODE_A ----------------
-    # (لاحقاً: if current_mode == "MODE_B": ... / "MODE_C": ... قبل هذا الجزء)
-    results = model.predict(
-        source=frame, conf=0.7, device=0, show=False, verbose=False, imgsz=640
-    )
+    results = model.predict(source=frame, conf=0.7, device=0, show=False, verbose=False, imgsz=640)
     boxes = results[0].boxes
     annotated_frame = results[0].plot()
 
     detected = len(boxes) > 0
     direction, angle = "None", 0
+    snapshot_to_send = None
 
     if detected:
-        current_time = time.time()
-
+        last_seen_time = now
         x1, y1, x2, y2 = boxes[0].xyxy[0]
         center_x = int((x1 + x2) / 2)
         center_y = int((y1 + y2) / 2)
@@ -152,22 +146,35 @@ while cap.isOpened():
         else:
             direction, angle = "Front", 0
 
-        if current_time - last_serial_time >= SERIAL_INTERVAL:
-            last_serial_time = current_time
+        # 1) إرسال الإحداثيات إلى ESP32 المرسل
+        if now - last_serial_time >= SERIAL_INTERVAL:
+            last_serial_time = now
             send_to_esp32(f"D,{center_x},{center_y},{angle}\n")
 
-        if current_time - last_alert_time > ALERT_COOLDOWN:
-            last_alert_time = current_time
+        # 2) الإنذار الصوتي الذكي + لقطة الهاتف (فقط عند أول رصد أو عند تغيّر الاتجاه)
+        is_new_target = not target_present
+        dir_changed = (direction != last_announced_dir)
+
+        if is_new_target or dir_changed:
+            target_present = True
+            last_announced_dir = direction
+            snapshot_to_send = annotated_frame  # إرسال صورة واحدة فقط للهاتف
+
             threading.Thread(
                 target=vs.send_audio_warning,
                 args=("MODE_A_DRONE", direction, angle),
                 daemon=True,
             ).start()
+    else:
+        # إذا اختفى الهدف لأكثر من 3 ثوانٍ نصفر الحالة لاستقباله كهدف جديد لاحقاً
+        if target_present and (now - last_seen_time > TARGET_LOST_RESET_SEC):
+            target_present = False
+            last_announced_dir = None
 
-    # تحديث الجوال كل فريم (الحالة + الصورة المعلّمة)
-    web.update_alert(detected, direction, angle, "MODE_A", annotated_frame)
+    # تحديث حالة الهاتف (يرسل الصورة فقط عندما تكون snapshot_to_send غير فارغة)
+    web.update_alert(detected, direction, angle, "MODE_A", snapshot=snapshot_to_send)
 
-    cv2.imshow("Custom Tumbler Detection", annotated_frame)
+    cv2.imshow("Falcon Eye - Mode A", annotated_frame)
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
